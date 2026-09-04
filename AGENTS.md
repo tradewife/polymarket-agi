@@ -6,6 +6,8 @@ This repo is not a dashboard demo and not a 9B-token training stack. It is a sma
 
 Read this before editing `agent/polyagent/`, `LIVE_TRADING`, `judge()`, or anything that can spend paper or real capital.
 
+**Active candidate (paper only):** [SPEC-path-ensemble.md](SPEC-path-ensemble.md) — independent `p_true` from a local price-path ensemble on crypto markets that resolve off a listed price. Implement that spec; do not clone Synth or flip `LIVE_TRADING` in the same patch.
+
 ---
 
 ## Doctrine
@@ -29,9 +31,10 @@ Canonical code: `agent/polyagent/reason.py` → `judge()`.
 
 1. Default **HOLD**. The book *is* the public probability. Inventing `p_true` from volume, “favorite,” or vibes is not edge.
 2. **ARB** only if `yes_fill + no_fill + taker_fees < 0.995` (locked $1 payout after V2 fees `shares × rate × p(1−p)`).
-3. Any non-HOLD is sized with **quarter-Kelly**, cash-capped, ticket-capped at **$5**, max **4** open. Paper bankroll **$100**. Ledger in `agent/data/agent.db`.
-4. Paper fills are **takers** (pay the fee). Do not credit maker rebates.
-5. **LIVE_TRADING** stays `false` until the deposit **funder** is funded *and* a gate (below) has passed. Signer EOA ≠ funder.
+3. **Path-ensemble candidate** (SPEC-path-ensemble.md, paper): if the market parses as BTC/ETH/SOL/XRP/HYPE up-down or level, `p_true` is the share of simulated paths on the YES side of the strike. BUY_YES / BUY_NO only when that p beats the fill plus V2 fee plus `POLYAGENT_PATH_EDGE`. Unparsed markets stay HOLD.
+4. Any non-HOLD is sized with **quarter-Kelly**, cash-capped, ticket-capped at **$5**, max **4** open. Paper bankroll **$100**. Ledger in `agent/data/agent.db`.
+5. Paper fills are **takers** (pay the fee). Do not credit maker rebates.
+6. **LIVE_TRADING** stays `false` until the deposit **funder** is funded *and* a gate (below) has passed. Signer EOA ≠ funder.
 
 HOLDs are decisions. A cycle with 50 HOLDs and 0 fills is a successful episode, not an idle bug.
 
@@ -46,7 +49,8 @@ HOLDs are decisions. A cycle with 50 HOLDs and 0 fills is a successful episode, 
 - Price every proposal **net of the V2 fee curve** (`agent/polyagent/fees.py`). If it does not beat fees, it is not a candidate.
 - Keep the dashboard a **viewer** of the snapshot. Do not give the UI a second book, a second bankroll, or a toy CLOB ABI.
 - Prefer public Polymarket APIs (Gamma/CLOB, DNS-pinned). Do not put paid Polynode on the critical path.
-- When adding evidence (news, resolution clock, structure), timestamp it **at decision time** and store it on the episode. Post-hoc stories are not traces.
+- When adding evidence (paths, news, resolution clock, structure), timestamp it **at decision time** and store it on the episode. Post-hoc stories are not traces.
+- Path ensembles are evidence for `judge()`, not a second product. Do not clone `synth-subnet` or subscribe to Synth API inside this repo until SPEC-path-ensemble.md says that phase is open.
 
 ---
 
@@ -59,6 +63,7 @@ HOLDs are decisions. A cycle with 50 HOLDs and 0 fills is a successful episode, 
 - Never raise `LIVE_TRADING` to ship a hunch. Paper first, then the profit gate.
 - Never create a parallel agent (dashboard Prisma, swarm Python, RainbowKit `createOrder`). One loop: `agent/polyagent`.
 - Never restore skills/, docker swarm, WorldMonitor stubs, or Kelly-on-0.5-prior.
+- Never bake directional drift into the path simulator so RTP or a hunch looks good. Zero-mean log-increments. SN50 CRPS will punish leftover drift later.
 
 ---
 
@@ -87,7 +92,7 @@ Do this on a cadence, not as a vibe.
 | Cadence | Action |
 | --- | --- |
 | Every cycle | `judge()` → episode JSONL → snapshot. No silent cycles. |
-| Daily | Read last day’s episodes. Count HOLD vs ARB vs other. Note any ARB that fired or should have. |
+| Daily | Read last day’s episodes. Count HOLD vs ARB vs path BUY. Note any ARB/path that fired or should have. |
 | Weekly | Replay: for each filled (or hypothetical) ticket, compute MFE/MAE and “exit at MFE vs actual.” Write 5 lines in the next commit message or a dated note under `agent/data/` (gitignored) / chat — not a new markdown religion. |
 | Before any `judge()` edit | Name the failure mode (no edge / bad size / bad exit / acting without evidence). Patch that class, not one market. |
 | Before live | Profit gate above. |
@@ -102,7 +107,10 @@ Do this on a cadence, not as a vibe.
 
 | Path | Role |
 | --- | --- |
-| `agent/polyagent/reason.py` | Judgment. **Only** place for p_true / HOLD / ARB / future LLM. |
+| `SPEC-path-ensemble.md` | Implementation spec for the path `p_true` candidate. |
+| `agent/polyagent/reason.py` | Judgment. **Only** place for p_true / HOLD / ARB / BUY_* / future LLM. |
+| `agent/polyagent/price_markets.py` | Parse asset + horizon + strike (SPEC). |
+| `agent/polyagent/paths.py` | Ensemble simulator (SPEC). |
 | `agent/polyagent/fees.py` | V2 taker fee. Source of truth for “beats fees.” |
 | `agent/polyagent/strategy.py` | Turns `Judgment` into sized intents (Kelly + caps). |
 | `agent/polyagent/loop.py` | Scan → judge → MFE update → execute → episode. |
@@ -120,6 +128,7 @@ Do this on a cadence, not as a vibe.
 systemctl --user status polyagent
 cd agent && uv run python -m polyagent status
 bash agent/start.sh --once
+cd agent && uv run python -m unittest discover -s tests
 bun run dev
 ```
 
