@@ -1,79 +1,57 @@
 # PolyAgent
 
-Autonomous Polymarket trading agent with real-time dashboard. AI-powered edge detection, Kelly criterion position sizing, and wallet intelligence.
+Agents and contributors: **[AGENTS.md](AGENTS.md)** is the operating contract (live policy, profit gate, learning loop).
 
-## Stack
+One autonomous paper trader for Polymarket, plus a thin dashboard that only shows that book.
 
-- **Next.js 16** + Turbopack
-- **Prisma** + SQLite
-- **shadcn/ui** + Tailwind CSS
-- **xAI Grok-4.20** (agent reasoning)
-- **RainbowKit** (wallet connection)
-- **Bun** (runtime + package manager)
+There is no Grok/xAI call, no copy-trading, no Kelly-on-a-fake-probability, and no Polynode requirement. The reasoner HOLDs unless buying YES and NO together still costs less than $1 after taker fees.
 
-## Quick Start
+## Run the agent
 
 ```bash
-bun install
-cp .env.local.example .env.local
-bun run db:push
-bun run dev
+bash agent/start.sh --once    # one scan
+bash agent/start.sh           # loop
+# already enabled:
+systemctl --user status polyagent
 ```
 
-Open http://localhost:3000
+Paper bankroll is $100. Live CLOB stays off until `LIVE_TRADING=true` **and** the deposit wallet is funded.
 
-## Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `DATABASE_URL` | Yes | SQLite connection string (default: `file:./dev.db`) |
-| `XAI_API_KEY` | Yes | xAI API key for Grok |
-| `POLYMARKET_API_KEY` | For live trading | Polymarket CLOB API key |
-
-## Scripts
-
-| Command | Description |
-|---------|-------------|
-| `bun run dev` | Start development server |
-| `bun run build` | Production build |
-| `bun run start` | Start production server (port 3000) |
-| `bun run db:push` | Sync database schema |
-| `bun run db:migrate` | Run migrations |
-
-## Architecture
-
+```bash
+cd agent && uv run python -m polyagent status
 ```
-src/
-  app/
-    api/
-      agent/          # Agent state
-      agent-decide/   # AI decision endpoint
-      kelly/          # Kelly criterion position sizer
-      markets/        # Polymarket market data
-      news/           # News sentiment feed
-      performance/    # Portfolio analytics
-      trades/         # Trade execution + history
-      wallets/        # Wallet tracking + leaderboard
-  components/
-    dashboard/        # Dashboard UI components
-  hooks/              # Custom React hooks
-  lib/                # Shared utilities + store
-
-prisma/
-  schema.prisma       # Database models
-```
-
-## Agent Logic
-
-The agent scans top wallets by 90-day performance, computes edge scores, tracks positions on active Polymarket markets, and uses xAI Grok for trade reasoning. Kelly criterion determines position sizing.
 
 ## Dashboard
 
-- **Overview** — Performance charts, portfolio timeline, wallet leaderboard, news feed, agent console, trade feed
-- **Analytics** — Wallet network graph, activity heatmaps, PnL heatmaps, sentiment timeline, correlation matrix, trade clustering
-- **Trading** — Wallet connect, market scanner, market depth, Kelly sizer, order book, strategy backtest, portfolio allocation
-- **Risk & Strategy** — Deployment timeline, risk analysis, agent strategy panel, strategy comparison
+```bash
+bun install
+bun run dev
+```
 
-## License
+`GET /api/agent` reads `agent/data/snapshot.json` written each cycle.
+`GET /api/markets` is Gamma (DNS-pinned).
 
-MIT
+## What the reasoner does
+
+`agent/polyagent/reason.py` is the judgment slot:
+
+- Default: **HOLD**. Market price is the public p. Inventing another p without evidence is not edge.
+- Exception: **ARB** if `yes_fill + no_fill + taker_fees < 0.995` (locked $1 payout).
+- Sizing for any non-HOLD is quarter-Kelly, capped at $5, deducted from cash including V2 fees (`shares × rate × p(1−p)`).
+
+When you add `XAI_API_KEY` later, that function is the only place to plug it in.
+
+## How we think about this (UV Labs × RTP)
+
+[UV Labs](https://uvlabs.ai/agentic-trading/) is right that *judgment* needs memory: reasoning traces, MFE/MAE, counterfactuals — not just P&L. [Resilient Protocol](https://www.resilientprotocol.xyz/) is right that the *live* engine should be a short, gated rule with fees in the sim (score + ATR stops, not an LLM on every tick).
+
+We take both, cheaply:
+
+- **Act like RTP:** one rule, fees on, hard cash/slot caps. No social-sentiment firehose (UV themselves say raw sentiment lags and is gamed).
+- **Remember like UV:** every cycle appends `agent/data/episodes.jsonl` (what we saw, HOLD vs ARB, fills, MFE/MAE on open tickets). HOLDs are decisions. Lucky wins with bad process stay labeled.
+
+That is how this stays `polymarket-agi` without becoming a 9B-token training stack.
+
+## Wallet
+
+Official CLI wallet if present (`~/.config/polymarket/config.json`), else a new EOA. Fund **funder** (deposit wallet), not the signer EOA.

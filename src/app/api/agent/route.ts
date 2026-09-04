@@ -1,41 +1,29 @@
-import { db } from '@/lib/db'
 import { NextResponse } from 'next/server'
-import { logger } from '@/lib/logger'
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+const SNAPSHOT = path.join(process.cwd(), 'agent', 'data', 'snapshot.json')
 
 export async function GET() {
   try {
-    let agentState = await db.agentState.findFirst({
-      orderBy: { createdAt: 'desc' },
+    const raw = await readFile(SNAPSHOT, 'utf8')
+    return NextResponse.json(JSON.parse(raw), {
+      headers: { 'Cache-Control': 'no-store' },
     })
-
-    // Create default state if none exists (app structure)
-    if (!agentState) {
-      agentState = await db.agentState.create({
-        data: {
-          status: 'active',
-          currentStrategy: 'kelly-criterion',
-          totalPnl: 0,
-          totalTrades: 0,
-          winRate: 0,
-          sharpeRatio: null,
-          maxDrawdown: null,
-          capitalBase: 55,
-          currentCapital: 55,
-        },
-      })
-    }
-
-    const recentDecisions = await db.agentDecision.findMany({
-      take: 10,
-      orderBy: { createdAt: 'desc' },
-    })
-
-    return NextResponse.json({
-      state: agentState,
-      recentDecisions,
-    })
-  } catch (error) {
-    logger.error('AgentAPI', 'Failed to fetch agent data', error)
-    return NextResponse.json({ error: 'Failed to fetch agent data' }, { status: 500 })
+  } catch {
+    return NextResponse.json(
+      {
+        ts: null,
+        ledger: null,
+        open_trades: [],
+        recent_trades: [],
+        judgments: [],
+        note: 'Agent snapshot not written yet. Start: bash agent/start.sh',
+      },
+      { status: 200 }
+    )
   }
 }

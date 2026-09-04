@@ -1,43 +1,126 @@
-<!-- gitnexus:start -->
-# GitNexus — Code Intelligence
+# AGENTS.md
 
-This project is indexed by GitNexus as **polymarket-auto-v2** (2408 symbols, 3563 relationships, 52 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+Operating contract for humans and coding agents on **polymarket-agi**.
 
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+This repo is not a dashboard demo and not a 9B-token training stack. It is a small autonomous trader that **acts simply** and **remembers completely**, then only changes the live rule when memory proves the change beats fees.
 
-## Always Do
+Read this before editing `agent/polyagent/`, `LIVE_TRADING`, `judge()`, or anything that can spend paper or real capital.
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+---
 
-## Never Do
+## Doctrine
 
-- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
-- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+Two sources. Two layers. Do not mash them into one clever object.
 
-## Resources
+| Layer | Teacher | Mandate |
+| --- | --- | --- |
+| **Live policy** | [Resilient Protocol](https://www.resilientprotocol.xyz/) | One short rule, fees in the sim, hard caps, gates before capital. Complexity belongs in validation, not in the tick. |
+| **Memory** | [UV Labs — agentic trading](https://uvlabs.ai/agentic-trading/), [decision episodes](https://uvlabs.ai/blog/anatomy-of-decision-episode), [reasoning traces](https://uvlabs.ai/blog/reasoning-traces), [counterfactuals](https://uvlabs.ai/blog/counterfactual-learning) | Every cycle is an episode: what we saw, what we judged, what we did (including HOLD), how the path moved (MFE/MAE). Outcomes alone mix luck and skill. |
 
-| Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/polymarket-auto-v2/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/polymarket-auto-v2/clusters` | All functional areas |
-| `gitnexus://repo/polymarket-auto-v2/processes` | All execution flows |
-| `gitnexus://repo/polymarket-auto-v2/process/{name}` | Step-by-step execution trace |
+**AGI here** does not mean an LLM on every market. It means the system *judges* at runtime (not only a human-authored script with no record), *executes* the same loop end to end, and *improves* from process-labeled episodes rather than from a lucky PnL print.
 
-## CLI
+If a change makes the live brain fatter without a gate, it is not AGI. It is bloat. The original fork still exists on GitHub; do not restore it.
 
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+---
 
-<!-- gitnexus:end -->
+## Live policy (current)
+
+Canonical code: `agent/polyagent/reason.py` → `judge()`.
+
+1. Default **HOLD**. The book *is* the public probability. Inventing `p_true` from volume, “favorite,” or vibes is not edge.
+2. **ARB** only if `yes_fill + no_fill + taker_fees < 0.995` (locked $1 payout after V2 fees `shares × rate × p(1−p)`).
+3. Any non-HOLD is sized with **quarter-Kelly**, cash-capped, ticket-capped at **$5**, max **4** open. Paper bankroll **$100**. Ledger in `agent/data/agent.db`.
+4. Paper fills are **takers** (pay the fee). Do not credit maker rebates.
+5. **LIVE_TRADING** stays `false` until the deposit **funder** is funded *and* a gate (below) has passed. Signer EOA ≠ funder.
+
+HOLDs are decisions. A cycle with 50 HOLDs and 0 fills is a successful episode, not an idle bug.
+
+---
+
+## Always
+
+- Change live behavior only in `judge()` (and the sizing that consumes `Judgment`). One hook.
+- After every cycle, persist: SQLite + `agent/data/snapshot.json` + append `agent/data/episodes.jsonl`.
+- On every open ticket, update **MFE/MAE** (`trades.mfe` / `trades.mae`) from the live mark. Counterfactuals need the path, not just entry/exit.
+- Label process independently of PnL: good HOLD that “missed” a favorite rally is still good process; lucky favorite-chase is still bad process.
+- Price every proposal **net of the V2 fee curve** (`agent/polyagent/fees.py`). If it does not beat fees, it is not a candidate.
+- Keep the dashboard a **viewer** of the snapshot. Do not give the UI a second book, a second bankroll, or a toy CLOB ABI.
+- Prefer public Polymarket APIs (Gamma/CLOB, DNS-pinned). Do not put paid Polynode on the critical path.
+- When adding evidence (news, resolution clock, structure), timestamp it **at decision time** and store it on the episode. Post-hoc stories are not traces.
+
+---
+
+## Never
+
+- Never train or boast on outcome-only (“we made 2%”). Require the episode: reasoning + action + path + counterfactual.
+- Never buy the favorite because it is expensive. That was deleted on purpose.
+- Never call xAI/Grok (or any LLM) from the hot loop until `judge()` has a question the book does not already answer, and the call is traced (prompt, tools, confidence, action).
+- Never add naive social sentiment (raw bullish/bearish counts). [UV on sentiment](https://uvlabs.ai/blog/social-sentiment): it lags, is gamed, and is useless without engagement, source class, and alignment to the decision timestamp. Skip until that bar is met.
+- Never raise `LIVE_TRADING` to ship a hunch. Paper first, then the profit gate.
+- Never create a parallel agent (dashboard Prisma, swarm Python, RainbowKit `createOrder`). One loop: `agent/polyagent`.
+- Never restore skills/, docker swarm, WorldMonitor stubs, or Kelly-on-0.5-prior.
+
+---
+
+## Profit gate (mandatory before a policy change)
+
+A new live rule is a **candidate**, not a deploy. Same spirit as RTP’s gate suite, scaled to this book.
+
+1. **State the rule in one sentence** in `judge()` docstring / this file. If it needs a paragraph, it is not ready.
+2. **Paper only.** Run until you have enough episodes that include both HOLDs and the new action (do not evaluate on a handful of lucky fills).
+3. **Score process, not luck.** From `episodes.jsonl` + trade MFE/MAE:
+   - Actual PnL net of fees
+   - MFE left on the table / MAE risk taken
+   - Would-have: favorite-buy, always-hold, pair-arb-only
+   - Fraction of wins that were *also* labeled sound process
+4. **Beat the incumbent.** Candidate must beat **always-HOLD** and **current `judge()`** on fee-adjusted expectancy *and* not explode MAE. If it only wins because 97¢ favorites drifted, reject it.
+5. **Then** consider `LIVE_TRADING`, still $5 / 4 slots, funder funded.
+
+No candidate skips steps 2–4 because “AGI should just know.”
+
+---
+
+## Learning loop (how we push toward AGI)
+
+Do this on a cadence, not as a vibe.
+
+| Cadence | Action |
+| --- | --- |
+| Every cycle | `judge()` → episode JSONL → snapshot. No silent cycles. |
+| Daily | Read last day’s episodes. Count HOLD vs ARB vs other. Note any ARB that fired or should have. |
+| Weekly | Replay: for each filled (or hypothetical) ticket, compute MFE/MAE and “exit at MFE vs actual.” Write 5 lines in the next commit message or a dated note under `agent/data/` (gitignored) / chat — not a new markdown religion. |
+| Before any `judge()` edit | Name the failure mode (no edge / bad size / bad exit / acting without evidence). Patch that class, not one market. |
+| Before live | Profit gate above. |
+
+**Process supervision:** reward a correct HOLD. Punish a well-PnL trade whose trace is “price was high so I bought.” That is the UV lesson applied with RTP brutality.
+
+**Counterfactuals we always owe ourselves:** always-HOLD; pair-arb-only; and “what if we had bought the favorite.” The third exists to prove we were right *not* to.
+
+---
+
+## File map (do not grow this without cause)
+
+| Path | Role |
+| --- | --- |
+| `agent/polyagent/reason.py` | Judgment. **Only** place for p_true / HOLD / ARB / future LLM. |
+| `agent/polyagent/fees.py` | V2 taker fee. Source of truth for “beats fees.” |
+| `agent/polyagent/strategy.py` | Turns `Judgment` into sized intents (Kelly + caps). |
+| `agent/polyagent/loop.py` | Scan → judge → MFE update → execute → episode. |
+| `agent/polyagent/episode.py` | Episode writer. |
+| `agent/data/agent.db` | Ledger + trades + judgments. |
+| `agent/data/snapshot.json` | Dashboard. |
+| `agent/data/episodes.jsonl` | Learning corpus. |
+| `src/app/` | Thin viewer. No second brain. |
+
+---
+
+## Commands
+
+```bash
+systemctl --user status polyagent
+cd agent && uv run python -m polyagent status
+bash agent/start.sh --once
+bun run dev
+```
+
+Paper is the default. Live is a promotion, not a feature flag for convenience.

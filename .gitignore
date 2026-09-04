@@ -12,6 +12,19 @@ out/
 .env
 .env.local
 .env*.local
+.wallet.json
+*.sqlite
+polynode-trader.db
+polynode-trading.db
+
+# agent runtime
+agent/.venv/
+agent/data/
+agent/data/*.jsonl
+agent/*.log
+agent/polyagent.service
+__pycache__/
+*.py[cod]
 
 # database
 *.db
