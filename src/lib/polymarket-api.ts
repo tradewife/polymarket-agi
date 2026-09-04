@@ -17,9 +17,10 @@ const ENDPOINTS = [
 // Known IP addresses for Polymarket endpoints (bypass DNS hijack)
 // Resolved via public DNS (1.1.1.1) - update if these change
 const DNS_OVERRIDES: Record<string, string> = {
-  'gamma-api.polymarket.com': '104.18.33.93',
-  'api.polymarket.com': '104.18.33.93',
-  'clob.polymarket.com': '104.18.33.93',
+  'gamma-api.polymarket.com': '104.18.34.205',
+  'api.polymarket.com': '104.18.34.205',
+  'clob.polymarket.com': '104.18.34.205',
+  'data-api.polymarket.com': '104.18.34.205',
 }
 
 export interface PolymarketMarket {
@@ -99,7 +100,6 @@ async function fetchWithFallback(path: string): Promise<any> {
   throw lastError || new Error('All endpoints failed')
 }
 
-// Fetch live markets from Polymarket
 export async function fetchMarkets(options?: {
   limit?: number
   active?: boolean

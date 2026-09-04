@@ -1,0 +1,17 @@
+[Unit]
+Description=PolyAgent autonomous Polymarket trader (paper by default)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/ABS/PATH/TO/polymarket-agi/agent
+Environment=PATH=/home/USER/.local/bin:/usr/bin:/bin
+ExecStart=/ABS/PATH/TO/polymarket-agi/agent/start.sh
+Restart=always
+RestartSec=15
+StandardOutput=append:/ABS/PATH/TO/polymarket-agi/agent/data/agent.log
+StandardError=append:/ABS/PATH/TO/polymarket-agi/agent/data/agent.log
+
+[Install]
+WantedBy=default.target
