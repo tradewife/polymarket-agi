@@ -50,6 +50,8 @@ class Settings:
     min_yes_favorite: float
     max_yes_underdog: float
     min_liquidity: float
+    path_edge: float
+    price_min_volume_24h: float
     db_path: Path
 
     @property
@@ -90,5 +92,8 @@ def load_settings() -> Settings:
         min_yes_favorite=_float("POLYAGENT_MIN_YES_FAVORITE", 0.72),
         max_yes_underdog=_float("POLYAGENT_MAX_YES_UNDERDOG", 0.22),
         min_liquidity=_float("POLYAGENT_MIN_LIQUIDITY", 500.0),
+        path_edge=_float("POLYAGENT_PATH_EDGE", 0.03),
+        # 8000 24h vol never surfaces 15m/1h BTC up/down. Price subset only.
+        price_min_volume_24h=_float("POLYAGENT_PRICE_MIN_VOLUME_24H", 500.0),
         db_path=DATA_DIR / "agent.db",
     )
