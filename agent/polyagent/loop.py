@@ -7,8 +7,9 @@ from polyagent.config import DATA_DIR, Settings, load_settings
 from polyagent.db import AgentDB, utcnow
 from polyagent.lock import ProcessLock
 from polyagent.episode import append_episode
+from polyagent.price_markets import parse_price_market
 from polyagent.reason import judge
-from polyagent.scan import fetch_candidates
+from polyagent.scan import ScoredMarket, fetch_candidates
 from polyagent.snapshot import write_snapshot
 from polyagent.strategy import pick_intents
 from polyagent.trader import execute_live, execute_paper, mark_to_market
@@ -17,10 +18,31 @@ SNAPSHOT_PATH = DATA_DIR / "snapshot.json"
 EPISODE_PATH = DATA_DIR / "episodes.jsonl"
 
 
+def _merge_price_markets(
+    markets: list[ScoredMarket], settings: Settings
+) -> list[ScoredMarket]:
+    """Top-volume scan misses thin BTC 15m/1h books. Pull extra only if parsed."""
+    floor = settings.price_min_volume_24h
+    if floor >= settings.min_volume_24h:
+        return markets
+    extra = fetch_candidates(limit=50, min_volume_24h=floor)
+    seen = {m.market_id for m in markets}
+    out = list(markets)
+    for market in extra:
+        if market.market_id in seen:
+            continue
+        if parse_price_market(market) is None:
+            continue
+        out.append(market)
+        seen.add(market.market_id)
+    return out
+
+
 def run_cycle(settings: Settings, db: AgentDB) -> dict:
     markets = fetch_candidates(
         limit=80, min_volume_24h=settings.min_volume_24h
     )
+    markets = _merge_price_markets(markets, settings)
     by_condition = {m.condition_id: m for m in markets if m.condition_id}
     for trade in db.open_trades():
         mkt = by_condition.get(trade["condition_id"])

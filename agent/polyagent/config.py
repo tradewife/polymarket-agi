@@ -93,9 +93,7 @@ def load_settings() -> Settings:
         max_yes_underdog=_float("POLYAGENT_MAX_YES_UNDERDOG", 0.22),
         min_liquidity=_float("POLYAGENT_MIN_LIQUIDITY", 500.0),
         path_edge=_float("POLYAGENT_PATH_EDGE", 0.03),
-        price_min_volume_24h=_float(
-            "POLYAGENT_PRICE_MIN_VOLUME_24H",
-            _float("POLYAGENT_MIN_VOLUME_24H", 8000.0),
-        ),
+        # 8000 24h vol never surfaces 15m/1h BTC up/down. Price subset only.
+        price_min_volume_24h=_float("POLYAGENT_PRICE_MIN_VOLUME_24H", 500.0),
         db_path=DATA_DIR / "agent.db",
     )
