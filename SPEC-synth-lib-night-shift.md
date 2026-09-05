@@ -16,7 +16,7 @@ https://synthdata.co/miners and the [miner tutorial](https://github.com/synthdat
 
 That middle step is the night shift. RTP already learned this: research/orchestration + promotion gates *before* the live binary. NSS 4d-chess-sequential is the same loop pointed at invariants instead of vibes — sequential, one thread, human gates, failure preserved.
 
-Do **not** clone `synth-subnet` in this ticket. Do **not** register netuid 50/247. Do **not** pay https://docs.synthdata.co/.
+Do **not** clone `synth-subnet` in this ticket. Do **not** register netuid 50/247. Do **not** buy a Synth API plan.
 
 ### Repos and docs
 
@@ -29,10 +29,40 @@ Do **not** clone `synth-subnet` in this ticket. Do **not** register netuid 50/24
 | Competitions / CRPS | https://github.com/synthdataco/synth-subnet/blob/main/README.md |
 | `simulations.py` hook (later copy) | https://github.com/synthdataco/synth-subnet/blob/main/synth/miner/simulations.py |
 | Price feeds | https://github.com/synthdataco/synth-subnet/blob/main/synth/miner/price_simulation.py |
+| Public OpenAPI (this host) | https://api.synthdata.co/docs |
+| Paid product docs | https://docs.synthdata.co/ |
 | Miners page | https://synthdata.co/miners |
 | RTP research | https://github.com/tradewife/resilient-token-protocol/tree/main/research |
 | RTP live | https://www.resilientprotocol.xyz/ |
 | 4d-chess-sequential | https://github.com/tradewife/night-shift-security/blob/main/.agents/skills/4d-chess-sequential/SKILL.md |
+
+### Public API vs paid product (checked 2026-09-05, no key)
+
+https://api.synthdata.co/docs is the miner/validator surface. Several routes return **200 with no `Authorization` header**. That is useful for night shift. It is **not** a free metamodel.
+
+**Use without a key (research / scoreboard):**
+
+| Method | Path | Why we care |
+| --- | --- | --- |
+| GET | `/v2/leaderboard/latest` | Live reward weights |
+| GET | `/v2/leaderboard/historical` | Window vs our backtest |
+| GET | `/v2/meta-leaderboard/latest` | Stable rank |
+| GET | `/v2/meta-leaderboard/historical` | Same |
+| GET | `/rewards/scores` | Smoothed scores, max 7d |
+| GET | `/validation/miner?uid=` | Format / timeout errors (tutorial) |
+| GET | `/validation/prompts` | Prompt start times |
+| GET | `/validation/scores/latest` | Per-miner CRPS + prompt_score |
+| GET | `/validation/scores/historical` | Same, dated |
+| GET | `/validation/realized-path` | Realized close path used to score a prompt |
+
+**Need `Authorization: Apikey ...` (do not call; 400 `missing key`):**
+
+- `/insights/*` (percentiles, vol, PM compares)
+- `/v2/prediction/metamodel/historical` and other prediction-path dumps
+
+Those are the $49 / $199 product. Out of scope. We generate our own paths.
+
+Optional later (not this ticket): a tiny read-only helper that pulls `/validation/scores/latest?asset=BTC` into the lab log so I5 has a live CRPS snapshot to sit next to synth-lib. No key, no writes, no `judge()` dependency.
 
 ---
 
@@ -42,10 +72,10 @@ This is not a Solana bounty hunt. Reuse the *sequence*, not the fuzz tooling.
 
 | 4D layer | Here |
 | --- | --- |
-| **0 Ingest** | synth-lib + this spec + SPEC-path-ensemble. System map: path shape, CRPS increments, three competitions, fee curve on the other book. |
+| **0 Ingest** | synth-lib + this spec + SPEC-path-ensemble + public `/validation` + `/v2/leaderboard`. System map: path shape, CRPS increments, three competitions, fee curve on the other book. |
 | **1 Invariants** | Living table below. Things that should never break. |
 | **2.1 Static** | Filename, JSON layout, 61 vs 289 points, 1000 paths, ≤8 sig digits, t0 = spot. |
-| **2.2 Dynamic** | `simulate()` vs realized Binance/HL path. CRPS per increment. |
+| **2.2 Dynamic** | `simulate()` vs realized Binance/HL path. CRPS per increment. Cross-check `/validation/scores/latest` after we have a UID (not now). |
 | **2.3 Economic** | Softmax weight / estimated α. Separately: Polymarket edge after V2 fees. SN50-optimal ≠ PM-PnL-optimal — log the tension, do not bake drift into the miner. |
 | **2.4 Temporal** | 5d (1h) / 10d (24h) rolling score. Regime (quiet vs spike). Missed hours = 90th-percentile poison later on the axon. |
 | **3 Human gate** | Kate reads rank + CRPS vs incumbent before any `judge()` or miner copy. |
@@ -127,6 +157,13 @@ uv run synth_lib/backtester/scripts/run_backtest.py \
   --predictions-dir miner_outputs/zero_drift_t/predictions
 ```
 
+Public scoreboard sniff (no key):
+
+```bash
+curl -sS 'https://api.synthdata.co/v2/leaderboard/latest'
+curl -sS 'https://api.synthdata.co/validation/scores/latest?asset=BTC' | head
+```
+
 Then compare `zero_drift_t` vs `gbm_agent` on that window. That is Phase 0 of 4D: baseline vs candidate, failure preserved.
 
 Hyperliquid assets (HYPE, equities) only have ~3.5 days of 1m history in-lib. Stay on **BTC/ETH/SOL/XRP + crypto-24h** until the pipe is boring.
@@ -171,13 +208,13 @@ This ticket adds:
 - `agent/polyagent/emit_synth.py` — CLI: walk hourly (24h) or ~15min (1h) timestamps over `--days`, call `simulate()`, write files. If `paths.simulate` is not ready, use the local GBM/Student-t fallback in `emit_synth` so the pipe runs tonight.
 - `agent/tests/test_synth_io.py` — one fake ensemble → filename + shape 1000×289 + t0.
 
-Do not vendor synth-lib into this repo. Do not add bittensor.
+Do not vendor synth-lib into this repo. Do not add bittensor. Do not add an API key or call `/insights` / `/v2/prediction/*`.
 
 ---
 
 ## Night-shift loop (sequential, one variant at a time)
 
-1. **Ingest** — pipe runs on BTC 24h, 2 days.
+1. **Ingest** — pipe runs on BTC 24h, 2 days. Optionally snapshot public `/validation/scores/latest?asset=BTC`.
 2. **Propose one change** — e.g. Student-t ν, EWMA span, separate 1h dt. One sentence.
 3. **Emit + backtest** same window as incumbent.
 4. **Record** in `agent/data/synth_lab.jsonl` (gitignored is fine): variant, window, mean CRPS, rank note, I5 pass/fail, charts path.
@@ -191,7 +228,7 @@ That is 4d-chess-sequential without Crucible: depth via one-thread iteration, no
 ## Out of scope
 
 - `synth-subnet` clone, PM2, 8091, testnet/mainnet register
-- Paid Synth API
+- Paid Synth API (`/insights`, `/v2/prediction/*`, dashboard key)
 - Chronos / LoRA on the 4050 (later research branch, after I5 is green on the statistical model)
 - Wiring RTP `rtp-trader` in the same PR
 - Backtests that start before 2026-06-23
@@ -205,3 +242,4 @@ That is 4d-chess-sequential without Crucible: depth via one-thread iteration, no
 - [ ] `zero_drift_t` has a CRPS number next to `gbm_agent` on the same window
 - [ ] one row in the lab log with I5 pass/fail
 - [ ] no TAO moved
+- [ ] no Synth API key created
