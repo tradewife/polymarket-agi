@@ -1,7 +1,8 @@
 """Emit Synth-lib prediction files for a short backtest window.
 
-Uses polyagent.paths.simulate when present; otherwise a local zero-drift
-Student-t fallback so the night-shift pipe runs before paths.py lands.
+Uses polyagent.paths.simulate when present. --vol is *annualized* log-vol
+and is converted to per-second for paths.simulate (which is not annualized).
+Historical t0 comes from Binance hourly closes unless --spot is injected.
 """
 
 from __future__ import annotations
@@ -14,10 +15,18 @@ import numpy as np
 
 from polyagent.synth_io import HORIZON, write_prediction
 
+SECONDS_PER_YEAR = 365.25 * 24 * 3600
+
 try:
     from polyagent.paths import simulate as _simulate
 except ImportError:
     _simulate = None  # type: ignore[assignment]
+
+
+def annual_vol_to_per_second(vol: float) -> float:
+    if vol < 0:
+        raise ValueError("vol must be >= 0")
+    return float(vol) / np.sqrt(SECONDS_PER_YEAR)
 
 
 def _fallback_simulate(
@@ -54,12 +63,59 @@ def _spot_binance(asset: str) -> float:
     return float(data["price"])
 
 
+def _hourly_closes(
+    asset: str, start: datetime, end: datetime
+) -> list[tuple[datetime, float]]:
+    import json
+    import urllib.error
+    import urllib.request
+
+    symbol = {"BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT", "XRP": "XRPUSDT"}[asset]
+    start_ms = int(start.timestamp() * 1000)
+    end_ms = int(end.timestamp() * 1000)
+    url = (
+        "https://api.binance.com/api/v3/klines"
+        f"?symbol={symbol}&interval=1h&startTime={start_ms}&endTime={end_ms}&limit=1000"
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            rows = json.loads(resp.read().decode())
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return []
+    out: list[tuple[datetime, float]] = []
+    if not isinstance(rows, list):
+        return out
+    for row in rows:
+        try:
+            ts = datetime.fromtimestamp(int(row[0]) / 1000, tz=timezone.utc)
+            close = float(row[4])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if close > 0:
+            out.append((ts, close))
+    return out
+
+
+def _spot_at(
+    series: list[tuple[datetime, float]] | None, when: datetime
+) -> float | None:
+    if not series:
+        return None
+    chosen: float | None = None
+    for ts, close in series:
+        if ts <= when:
+            chosen = close
+        else:
+            break
+    return chosen
+
+
 def emit(
     dest: Path,
     *,
     asset: str,
     horizon: str,
-    days: int,
+    days: float,
     end: datetime | None = None,
     spot: float | None = None,
     vol: float = 0.6,
@@ -72,26 +128,41 @@ def emit(
     else:
         step = timedelta(minutes=15)
     start0 = end - timedelta(days=days)
+    spots: list[tuple[datetime, float]] | None = None
+    live_fallback: float | None = None
     if spot is None:
-        spot = _spot_binance(asset)
+        spots = _hourly_closes(asset, start0, end)
+        if not spots:
+            live_fallback = _spot_binance(asset)
     written: list[Path] = []
     t = start0
     i = 0
+    vol_ps = annual_vol_to_per_second(vol)
     while t < end:
+        if spot is not None:
+            spot_t = float(spot)
+        else:
+            spot_t = _spot_at(spots, t) or live_fallback
+        if spot_t is None:
+            t += step
+            i += 1
+            continue
+        prices = None
         if _simulate is not None:
             ens = _simulate(
                 asset=asset,
                 horizon_seconds=spec["time_length"],
                 n_paths=1000,
                 dt_seconds=spec["time_increment"],
-                spot=spot,
-                vol=vol,
+                spot=spot_t,
+                vol=vol_ps,
                 seed=seed + i,
             )
-            prices = np.asarray(ens.prices if hasattr(ens, "prices") else ens)
-        else:
+            if ens is not None:
+                prices = np.asarray(ens.prices)
+        if prices is None:
             prices = _fallback_simulate(
-                spot=spot,
+                spot=spot_t,
                 n_points=spec["n_points"],
                 dt_seconds=spec["time_increment"],
                 vol=vol,
