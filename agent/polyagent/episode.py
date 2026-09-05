@@ -1,8 +1,8 @@
 """Decision episodes — UV Labs shape, RTP simplicity.
 
-Live policy stays dumb (HOLD unless pair-arb). Memory is rich: every cycle
-we record what we saw, what we judged, what we did, and (on open trades)
-MFE/MAE so later we can tell skill from luck without changing the strategy.
+Live policy stays short (HOLD unless pair-arb or path-edge). Memory is rich:
+every cycle we record what we saw, what we judged, what we did, and (on open
+trades) MFE/MAE so later we can tell skill from luck.
 """
 
 from __future__ import annotations
@@ -73,9 +73,11 @@ def append_episode(
         "ts": utcnow(),
         "mode": mode,
         "reasoning": {
-            "policy": "hold-unless-pair-arb",
+            "policy": "hold-unless-pair-arb-or-path-edge",
             "explicit": (
-                "No independent p_true. HOLD unless YES+NO+taker fees < 0.995."
+                "HOLD unless pair-arb after fees, or a parsed crypto price "
+                "market whose path-ensemble p_true beats fill+V2 fee+"
+                "POLYAGENT_PATH_EDGE."
             ),
             "holds": holds,
             "actionable": [
@@ -88,6 +90,20 @@ def append_episode(
                     "kelly_fraction": j.kelly_fraction,
                     "pair_cost": j.pair_cost,
                     "implied_yes": j.implied_yes,
+                    "p_true": j.p_true,
+                    **(
+                        {
+                            "asset": j.path.asset,
+                            "horizon_seconds": j.path.horizon_seconds,
+                            "strike": j.path.strike,
+                            "settlement": j.path.settlement,
+                            "n_paths": j.path.n_paths,
+                            "spot": j.path.spot,
+                            "vol": j.path.vol,
+                        }
+                        if j.path is not None
+                        else {}
+                    ),
                 }
                 for j in actionable
             ],

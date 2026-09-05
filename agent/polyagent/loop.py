@@ -30,7 +30,7 @@ def run_cycle(settings: Settings, db: AgentDB) -> dict:
         db.update_excursion(trade["id"], mark)
     resolved = mark_to_market(db, by_condition)
 
-    judgments = [judge(m) for m in markets]
+    judgments = [judge(m, path_edge=settings.path_edge) for m in markets]
     ts = utcnow()
     db.record_judgments(
         [
@@ -54,6 +54,7 @@ def run_cycle(settings: Settings, db: AgentDB) -> dict:
 
     holds = sum(1 for j in judgments if j.action == "HOLD")
     arbs = [j for j in judgments if j.action == "ARB"]
+    path_buys = [j for j in judgments if j.action in {"BUY_YES", "BUY_NO"}]
 
     open_rows = db.open_trades()
     open_conditions = {row["condition_id"] for row in open_rows if row["condition_id"]}
@@ -78,7 +79,7 @@ def run_cycle(settings: Settings, db: AgentDB) -> dict:
     snap = db.snapshot()
     note = (
         f"resolved={resolved} hold={holds}/{len(judgments)} arb={len(arbs)} "
-        f"cash={snap['cash']:.2f} fees={snap['fees_paid']:.4f}"
+        f"path={len(path_buys)} cash={snap['cash']:.2f} fees={snap['fees_paid']:.4f}"
     )
     db.heartbeat(
         mode="live" if settings.live_trading and not settings.paper else "paper",
@@ -98,6 +99,7 @@ def run_cycle(settings: Settings, db: AgentDB) -> dict:
             "funder": settings.funder_address,
             "holds": holds,
             "arbs_seen": len(arbs),
+            "path_buys": len(path_buys),
             "note": note,
         },
     )
@@ -120,6 +122,7 @@ def run_cycle(settings: Settings, db: AgentDB) -> dict:
         "ledger": snap,
         "holds": holds,
         "arbs": len(arbs),
+        "path_buys": len(path_buys),
         "mode": "live" if settings.live_trading and not settings.paper else "paper",
     }
 
@@ -133,7 +136,8 @@ def run_forever(once: bool = False) -> None:
         snap = db.snapshot()
         print(
             f"[polyagent] mode={('live' if settings.live_trading and not settings.paper else 'paper')} "
-            f"reasoner=local-hold-unless-arb scan={settings.scan_seconds}s "
+            f"reasoner=hold-unless-arb-or-path-edge scan={settings.scan_seconds}s "
+            f"path_edge={settings.path_edge} "
             f"max_pos={settings.max_position} max_open={settings.max_open} "
             f"bankroll={settings.paper_bankroll:.2f} cash={snap['cash']:.2f} "
             f"signer={settings.signer_address or 'unset'} funder={settings.funder_address or 'unset'}",
@@ -145,7 +149,8 @@ def run_forever(once: bool = False) -> None:
                 led = result["ledger"]
                 print(
                     f"[polyagent] cycle markets={result['markets']} hold={result['holds']} "
-                    f"arb={result['arbs']} placed={len(result['placed'])} "
+                    f"arb={result['arbs']} path={result['path_buys']} "
+                    f"placed={len(result['placed'])} "
                     f"open={result['open']}/{settings.max_open} cash={led['cash']:.2f} "
                     f"reserved={led['reserved_notional']:.2f} fees={led['fees_paid']:.4f} "
                     f"pnl={led['realized_pnl']:.2f} mode={result['mode']}",

@@ -1,9 +1,12 @@
-"""HOLD unless pair-arb after V2 taker fees."""
+"""HOLD unless pair-arb after V2 taker fees, or path-edge on parsed crypto."""
 
 from __future__ import annotations
 
 import unittest
 
+import numpy as np
+
+from polyagent.paths import PathEnsemble
 from polyagent.reason import judge, quarter_kelly
 from polyagent.scan import ScoredMarket
 
@@ -60,6 +63,107 @@ class ReasonTests(unittest.TestCase):
         self.assertGreater(k, 0.0)
         self.assertLessEqual(k, 0.25)
 
+    def test_unparsed_stays_hold_without_p_true(self) -> None:
+        j = judge(market(question="Will the Fed cut?"))
+        self.assertEqual(j.action, "HOLD")
+        self.assertIsNone(j.p_true)
+
+    def test_all_paths_above_buys_yes(self) -> None:
+        prices = np.full((32, 61), 110.0)
+        prices[:, 0] = 100.0
+
+        def sim(asset, horizon_seconds, **_k):
+            return PathEnsemble(
+                asset=asset,
+                horizon_seconds=horizon_seconds,
+                dt_seconds=60,
+                spot=100.0,
+                vol=0.001,
+                prices=prices,
+            )
+
+        j = judge(
+            market(
+                question="Will Bitcoin be above $100 in the next 1 hour?",
+                yes_price=0.50,
+                no_price=0.50,
+            ),
+            simulate_fn=sim,
+            path_edge=0.03,
+        )
+        self.assertEqual(j.action, "BUY_YES")
+        self.assertIsNotNone(j.p_true)
+        self.assertGreater(j.p_true or 0, 0.9)
+        self.assertGreater(j.kelly_fraction, 0.0)
+        self.assertIsNotNone(j.path)
+
+    def test_all_paths_below_buys_no(self) -> None:
+        prices = np.full((32, 61), 90.0)
+        prices[:, 0] = 100.0
+
+        def sim(asset, horizon_seconds, **_k):
+            return PathEnsemble(
+                asset=asset,
+                horizon_seconds=horizon_seconds,
+                dt_seconds=60,
+                spot=100.0,
+                vol=0.001,
+                prices=prices,
+            )
+
+        j = judge(
+            market(
+                question="Will Bitcoin be above $100 in the next 1 hour?",
+                yes_price=0.50,
+                no_price=0.50,
+            ),
+            simulate_fn=sim,
+            path_edge=0.03,
+        )
+        self.assertEqual(j.action, "BUY_NO")
+        self.assertIsNotNone(j.p_true)
+
+    def test_buffer_blocks_dust_edge(self) -> None:
+        n = 100
+        prices = np.full((n, 61), 99.0)
+        prices[:51, -1] = 101.0
+        prices[:, 0] = 100.0
+
+        def sim(asset, horizon_seconds, **_k):
+            return PathEnsemble(
+                asset=asset,
+                horizon_seconds=horizon_seconds,
+                dt_seconds=60,
+                spot=100.0,
+                vol=0.001,
+                prices=prices,
+            )
+
+        j = judge(
+            market(
+                question="Bitcoin Up or Down - 1 hour",
+                yes_price=0.50,
+                no_price=0.50,
+            ),
+            simulate_fn=sim,
+            path_edge=0.03,
+        )
+        self.assertEqual(j.action, "HOLD")
+        self.assertIsNotNone(j.p_true)
+
+    def test_arb_still_wins_on_a_price_market(self) -> None:
+        j = judge(
+            market(
+                question="Bitcoin Up or Down - 1 hour",
+                yes_price=0.40,
+                no_price=0.40,
+                best_ask=0.40,
+            )
+        )
+        self.assertEqual(j.action, "ARB")
+        self.assertIsNone(j.p_true)
+
 
 if __name__ == "__main__":
     unittest.main()
+

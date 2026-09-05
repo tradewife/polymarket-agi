@@ -29,9 +29,11 @@ If a change makes the live brain fatter without a gate, it is not AGI. It is blo
 
 Canonical code: `agent/polyagent/reason.py` → `judge()`.
 
+HOLD unless (1) pair-arb after fees or (2) parsed crypto price market whose path-ensemble `p_true` beats the fill by `POLYAGENT_PATH_EDGE` after V2 fees.
+
 1. Default **HOLD**. The book *is* the public probability. Inventing `p_true` from volume, “favorite,” or vibes is not edge.
 2. **ARB** only if `yes_fill + no_fill + taker_fees < 0.995` (locked $1 payout after V2 fees `shares × rate × p(1−p)`).
-3. **Path-ensemble candidate** (SPEC-path-ensemble.md, paper): if the market parses as BTC/ETH/SOL/XRP/HYPE up-down or level, `p_true` is the share of simulated paths on the YES side of the strike. BUY_YES / BUY_NO only when that p beats the fill plus V2 fee plus `POLYAGENT_PATH_EDGE`. Unparsed markets stay HOLD.
+3. **Path-ensemble candidate** (SPEC-path-ensemble.md, paper): if the market parses as BTC/ETH/SOL/XRP/HYPE up-down or level, `p_true` is the share of simulated paths on the YES side of the strike. BUY_YES / BUY_NO only when that p beats the fill plus V2 fee plus `POLYAGENT_PATH_EDGE`. Unparsed markets stay HOLD. Network/parse failure is HOLD.
 4. Any non-HOLD is sized with **quarter-Kelly**, cash-capped, ticket-capped at **$5**, max **4** open. Paper bankroll **$100**. Ledger in `agent/data/agent.db`.
 5. Paper fills are **takers** (pay the fee). Do not credit maker rebates.
 6. **LIVE_TRADING** stays `false` until the deposit **funder** is funded *and* a gate (below) has passed. Signer EOA ≠ funder.
